@@ -1,0 +1,331 @@
+---
+title: "Manuscript figures for RTGM10169 dPCR quantification"
+author: "Nate D. Olson"
+date: '`r Sys.Date()`'
+output: 
+    html:
+        toc: true
+        toc_float: true
+        df_print: paged
+        code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+library(readxl)
+library(ggpubr)
+```
+
+# Objective
+Re-create manuscript figures in R for improved reproducibility and visual appeal
+
+# Approach
+Use excel file provided by Megan Cleveland to recreate and revise figures generated in excel.
+
+# Results
+## Loading Data 
+```{r}
+f1_dat <- read_excel(here("data/All original F1data for graphs.xlsx"),
+                     sheet = "original data",range = "A1:M224") %>% 
+    ## renaming copies/ul for concentration for easier coding
+    rename(concentration = `pre-pcr dilution`)
+
+f2_dat <- read_excel(here("data/All original F2 data for graphs.xlsx"),
+                     sheet = "original",range = "A1:M144") %>% 
+    ## renaming copies/ul for concentration for easier coding
+    rename(concentration = `pre-pcr dilution`)
+
+
+ddpcr_dat <- bind_rows(`Fragment 1` = f1_dat, 
+                       `Fragment 2` = f2_dat, 
+                       .id = "fragment") %>% 
+    ## Renaming Targets
+    mutate(
+        Target = case_when(
+            Target == "BK-D" ~ "3’ sequence tag",
+            Target == "BK-E" ~ "5’ sequence tag",
+            Target == "WHO1" ~ "RdRp",
+            Target == "China2" ~ "China N",
+            Target == "China" ~ "ChinaORF1ab",
+            Target == "SarE" ~ "Sarbeco E",
+            Target == "Pas1" ~ "IP2",
+            Target == "Pas2" ~ "IP4",
+            TRUE ~ Target
+        )
+    ) %>% 
+    filter(Target != "HK2")
+        
+```
+
+
+```{r}
+glimpse(ddpcr_dat)
+```
+
+### Homogeneity Data
+```{r}
+homo_f1_dat <-
+    read_excel(
+        here(
+            "data/2020_05_29_homogeneity_testing_fragment_1_10169.xlsx"
+        ),
+        sheet = "calculations",
+        range = "A1:M85"
+    )  %>%
+    ## renaming copies/ul for concentration for easier coding
+    rename(measured_con = `pre-pcr dilution`)
+
+homo_f2_dat <-
+    read_excel(
+        here(
+            "data/2020_06_12_homogeneity_testing_fragment_2_10169.xlsx"
+        ),
+        sheet = "calculations",
+        range = "A1:L96"
+    )  %>%
+    ## renaming copies/ul for concentration for easier coding
+    rename(measured_con = `pre-pcr dilution`)
+
+homo_dat <- bind_rows(`Fragment 1` = homo_f1_dat,
+                      `Fragment 2` = homo_f2_dat,
+                      .id = "fragment")
+```
+
+```{r}
+glimpse(homo_dat)
+```
+
+### Stability Data
+```{r}
+f1_stab_df <- read_excel(here("data/March 2022 stability data.xlsx"),
+                         sheet = "F1 summary" )
+f2_stab_df <- read_excel(here("data/March 2022 stability data.xlsx"), 
+                         sheet = "F2 summary") %>% 
+    mutate(stdev = std)
+
+stability_df <- bind_rows(F1 = f1_stab_df, F2 = f2_stab_df, .id = "fragment")
+
+glimpse(stability_df)
+```
+
+
+## Figures
+### RT-dPCR Measurements
+RT-dPCR results are consistent across random vials but systematic differences in concentrations by target. 
+
+
+Alternative version of the plot with median and concentration range.
+```{r}
+(
+    ddpcr_plt <- ddpcr_dat %>%
+        filter(Sample != "NTC") %>%
+        ggerrorplot(
+            x = "Sample",
+            y = "concentration",
+            desc_stat = "median_hilow",
+            pallete = get_palette("npg", k = 14),
+            color = "Target",
+            error.plot = "pointrange",
+            size = 0.25,
+            position = position_dodge(0.5)
+        ) +
+        facet_wrap( ~ fragment, scales = "free_x", ncol = 2) +
+        theme_bw() +
+        theme(legend.position = "bottom", axis.text.x = element_blank()) +
+        guides(
+            fill = guide_legend(nrow = 3, override.aes = list(shape = 21)),
+            # shape = guide_legend(nrow = 2, override.aes = list(fill = "grey80")),
+            shape = guide_none()
+        ) +
+        # scale_color_brewer(type = "qual", palette = 9) +
+        labs(y = "Copies / uL")
+)
+```
+
+### Homogeneity Analysis
+```{r}
+homo_plot_dat <- homo_dat %>%
+    filter(Sample != "NTC",!str_detect(Sample, "SJ")) %>%
+    mutate(Sample = str_remove(Sample, " Fragment .")) %>%
+    group_by(Sample, fragment, Target) %>%
+    mutate(
+        measured_con_min  = min(measured_con),
+        measured_con_max = max(measured_con)
+    ) %>%
+    mutate(
+        Target = case_when(
+            Target == "SarE" ~ "Sarbeco E",
+            Target == "Pas1" ~ "IP2",
+            Target == "Pas2" ~ "IP4",
+            TRUE ~ Target
+        )
+    ) %>%
+    mutate(Sample = as.numeric(str_remove(Sample, "Box ")))
+
+homo_plot_target_ci_dat <- homo_plot_dat %>%
+    group_by(fragment, Target) %>%
+    summarise(con_mean = mean(measured_con),
+              con_sd = sd(measured_con)) %>%
+    mutate(con_uci = con_mean + 2 * con_sd,
+           con_lci = con_mean - 2 * con_sd)
+
+homo_plot_box_ci_dat <- homo_plot_dat %>%
+    group_by(fragment, Target, Sample) %>%
+    summarise(sam_con_mean = mean(measured_con),
+              sam_con_sd = sd(measured_con)) %>%
+    mutate(sam_con_uci = sam_con_mean + 2 * sam_con_sd,
+           sam_con_lci = sam_con_mean - 2 * sam_con_sd) 
+```
+
+```{r}
+p_col <- "darkblue"
+p_fil <- "orange"
+
+(
+    hom_plt <- homo_plot_box_ci_dat %>%
+        left_join(homo_plot_target_ci_dat) %>%
+        mutate(Sample = factor(Sample)) %>%
+        ggplot() +
+        geom_pointrange(
+            aes(
+                x = Sample,
+                y = sam_con_mean,
+                ymin = sam_con_lci,
+                ymax = sam_con_uci,
+                shape = fragment
+            ),
+            color = p_col,
+            fill = p_fil
+        )  +
+        geom_ribbon(
+            aes(
+                x = as.numeric(Sample),
+                ymin = con_lci,
+                ymax = con_uci
+            ),
+            fill = "grey90",
+            alpha = 0.5
+        ) +
+        geom_hline(
+            data = homo_plot_target_ci_dat,
+            aes(yintercept = con_mean),
+            color = "grey60",
+            size = 0.5
+        ) +
+        geom_hline(
+            data = homo_plot_target_ci_dat,
+            aes(yintercept = con_uci),
+            color = "grey60",
+            size = 0.5,
+            linetype = 2
+        ) +
+        geom_hline(
+            data = homo_plot_target_ci_dat,
+            aes(yintercept = con_lci),
+            color = "grey60",
+            size = 0.5,
+            linetype = 2
+        ) +
+        geom_pointrange(
+            aes(
+                x = Sample,
+                y = sam_con_mean,
+                ymin = sam_con_lci,
+                ymax = sam_con_uci,
+                shape = fragment
+            ),
+            color = p_col,
+            fill = p_fil
+        )  +
+        scale_shape_manual(values = c(21, 22)) +
+        theme_bw() +
+        facet_wrap(
+            ~ glue::glue("{fragment} ~ {Target}"),
+            nrow = 2,
+            scales = "free_y"
+        ) +
+        theme(legend.position = "bottom") +
+        # scale_fill_viridis_d(begin = 0.5) +
+        guides(
+            shape = guide_legend(nrow = 1, override.aes = list(fill = "grey80")),
+            fill = guide_none()
+        ) +
+        labs(x = "RTGM Box", y = "Copies / uL", shape = "")
+)
+```
+
+
+## Stability Measurements
+```{r}
+stab_plt_df <- stability_df %>%
+    filter(Target != "N1") %>%
+    mutate(
+        Target = case_when(
+            Target == "SarE" ~ "Sarbeco E",
+            Target == "Pas1" ~ "IP2",
+            Target == "Pas2" ~ "IP4",
+            TRUE ~ Target
+        )
+    ) %>%
+    mutate(
+        date_label = format(`Date Measured`, "%B, %Y"),
+        tube = str_remove(Sample, " 1:.*"),
+        tube = str_remove(tube, "Tube ")
+    ) %>%
+    group_by(date_label, Target) %>%
+    mutate(fragment = if_else(fragment == "F1", "Fragment 1", "Fragment 2"))
+```
+
+
+```{r}
+(
+    stab_plt <- ggplot(stab_plt_df) +
+        geom_pointrange(
+            aes(
+                x = Target,
+                y = average,
+                ymin = average - 2 * stdev,
+                ymax = average + 2 * stdev,
+                fill = date_label,
+                group = tube
+            ),
+            shape = 21,
+            position = position_jitterdodge(dodge.width = 0.5, jitter.width = 0.25)
+        ) +
+        facet_wrap( ~ fragment, scales = "free_x", ncol = 2) +
+        ylim(0, 7000000) +
+        theme_bw() +
+        labs(fill = "Timepoint", y = "Copies/uL") +
+        scale_fill_brewer(type = "qual", palette = 2) +
+        theme(
+            legend.position = c(0.75, 0.1),
+            legend.background = element_blank(),
+            legend.direction = "horizontal"
+        )
+)
+```
+
+# Saving Plots as PDFs
+```{r}
+ggsave(plot = ddpcr_plt, here("figures/ddpcr_plt.pdf"))
+ggsave(plot = hom_plt, here("figures/hom_plt.pdf"))
+ggsave(plot = stab_plt, here("figures/stability_plt.pdf"))
+```
+
+
+# Session Information
+## System Information
+```{r}
+sessioninfo::platform_info()
+```
+
+
+## Package Versions
+```{r}
+sessioninfo::package_info() %>% 
+    filter(attached = TRUE) %>% 
+    select(package, loadedversion, date, source) %>%
+    knitr::kable(booktabs = TRUE, row.names = FALSE)
+```
