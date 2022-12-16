@@ -20,7 +20,7 @@ library(ggpubr)
 
 ## Function for Nx10^N notation
 scientific_10 <- function(x) {
-  parse(text = gsub("e.", " %*% 10^",x))
+  parse(text = gsub("e.", " %*% 10^", scales::scientific_format(digits = 2)(x)))
 }
 ```
 
@@ -124,6 +124,8 @@ RT-dPCR results are consistent across random vials but systematic differences in
 
 Alternative version of the plot with median and concentration range.
 ```{r}
+
+
 (
     ddpcr_plt <- ddpcr_dat %>%
         filter(Sample != "NTC") %>%
@@ -159,7 +161,7 @@ Alternative version of the plot with median and concentration range.
             fill = guide_none(),
             shape = guide_none()
         ) +
-        scale_y_continuous(labels = scientific_10) + 
+        scale_y_continuous(labels = scientific_10) +
         # scale_color_brewer(type = "qual", palette = 9) +
         labs(y = expression(Copies/mu*L))
 )
@@ -332,7 +334,9 @@ stab_plt_df <- stability_df %>%
 # Saving Plots as PDFs
 ```{r}
 ggsave(plot = ddpcr_plt, here("figures/ddpcr_plt.pdf"))
-ggsave(plot = hom_plt, here("figures/hom_plt.pdf"))
+pdf(here("figures/hom_plt.pdf"))
+hom_plt
+dev.off()
 ggsave(plot = stab_plt, here("figures/stability_plt.pdf"))
 ```
 
